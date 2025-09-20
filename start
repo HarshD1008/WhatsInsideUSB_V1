@@ -1,0 +1,64 @@
+import os
+import time
+import hashlib
+import requests
+from win32com.client import Dispatch
+
+# VirusTotal API Key (replace with your own)
+VT_API_KEY = 'ENTER YOUR API KEY'
+VT_API_URL = 'https://www.virustotal.com/api/v3/files/'
+
+# Function to calculate file SHA256 hash
+def calculate_sha256(file_path):
+    sha256_hash = hashlib.sha256()
+    try:
+        with open(file_path, "rb") as f:
+            for byte_block in iter(lambda: f.read(4096), b""):
+                sha256_hash.update(byte_block)
+        return sha256_hash.hexdigest()
+    except:
+        return None
+
+# Function to check file hash using VirusTotal API
+def check_file_virustotal(file_hash):
+    headers = {'x-apikey': VT_API_KEY}
+    response = requests.get(VT_API_URL + file_hash, headers=headers)
+    if response.status_code == 200:
+        data = response.json()
+        # Check number of antivirus flags
+        malicious_votes = data['data']['attributes']['last_analysis_stats']['malicious']
+        if malicious_votes > 0:
+            return True
+    return False
+
+# Function to scan USB drive files
+def scan_usb(drive_letter):
+    malicious_files = []
+    for root, dirs, files in os.walk(drive_letter + '\\'):
+        for file in files:
+            file_path = os.path.join(root, file)
+            file_hash = calculate_sha256(file_path)
+            if file_hash:
+                if check_file_virustotal(file_hash):
+                    malicious_files.append(file_path)
+                    print(f"Malicious file detected: {file_path}")
+    if not malicious_files:
+        print("No malicious files detected on USB.")
+    return malicious_files
+
+# Function to detect USB insertion on Windows
+def monitor_usb_insertion():
+    wmi = Dispatch("WbemScripting.SWbemLocator").ConnectServer(".", "root\\CIMV2")
+    usb_query = "SELECT * FROM __InstanceCreationEvent WITHIN 2 WHERE TargetInstance ISA 'Win32_LogicalDisk'"
+    watcher = wmi.ExecNotificationQuery(usb_query)
+    print("Monitoring for USB insertion...")
+    while True:
+        event = watcher.NextEvent()
+        drive = event.TargetInstance.DeviceID
+        if event.TargetInstance.DriveType == 2:  # DriveType 2 is removable drive
+            print(f"USB Drive Inserted: {drive}")
+            malicious_files = scan_usb(drive)
+            print("Scan Complete.\n")
+
+if __name__ == "__main__":
+    monitor_usb_insertion()
